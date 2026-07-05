@@ -5,21 +5,24 @@ import json
 import requests
 from dotenv import load_dotenv
 import os
+from google import genai
 
 load_dotenv()
 
 sqs = boto3.resource('sqs')
+llm_client = genai.Client()
 
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-3.5-flash')
 GITHUB_SECRET = os.environ['GITHUB_SECRET']
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 SQS_QUEUE_NAME = os.environ['SQS_QUEUE_NAME']
 
 
-MAX_CHANGES_PER_FILE = 400  
+MAX_CHANGES_PER_FILE = 400
 MAX_TOTAL_DIFF_LINES = 2000
 
 
-def build_review_prompt(file_diffs: list[dict], skipped_files: list[str]) -> str:
+def build_review_prompt(file_diffs, skipped_files):
     """
     Builds the final LLM prompt by injecting collected diffs.
 
@@ -90,6 +93,36 @@ Provide your review in the following markdown format:
     return prompt
 
 
+def generate_review(prompt):
+    """
+    Call Gemini to generate a PR review.
+    Returns the review text on success, or None on failure.
+    """
+    try:
+        review = llm_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt
+        )
+        return review.text
+    except Exception as e:
+        print(f"[Gemini] Error generating review: {type(e).__name__}: {e}")
+        return None
+
+
+def patch_comment(comment_url, body_text):
+    """
+    PATCH an existing GitHub comment with body_text.
+    """
+    headers = {
+        'Authorization': f'Bearer {GITHUB_TOKEN}',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+    resp = requests.patch(comment_url, headers=headers, json={'body': body_text}, timeout=10)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def review_record(record):
     body = json.loads(record['body'])
 
@@ -118,8 +151,8 @@ def review_record(record):
     if files_changed_in_pr is None:
         raise RuntimeError(f"Failed to fetch PR files from {files_url} after 5 retries")
 
-    file_diffs = []      
-    skipped_files = []   
+    file_diffs = []
+    skipped_files = []
     total_diff_lines = 0
 
     for file in files_changed_in_pr:
@@ -151,7 +184,20 @@ def review_record(record):
         })
 
     prompt = build_review_prompt(file_diffs, skipped_files)
-    return prompt
+
+    review = generate_review(prompt)
+
+    if review is None:
+        print('[review_record] LLM review generation failed.')
+        return
+
+    if comment_url:
+        try:
+            patch_comment(comment_url, review)
+        except Exception as e:
+            print(f'[review_record] Failed to PATCH review comment: {e}')
+    else:
+        print('[review_record] comment_url is None — skipping PATCH.')
 
 
 def lambda_handler(event, context):
