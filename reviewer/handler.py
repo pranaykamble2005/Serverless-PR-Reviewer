@@ -36,6 +36,19 @@ _GEMINI_TRANSIENT_ERRORS = (
     google_exceptions.InternalServerError,
 )
 
+FAILURE_COMMENT = """## 🔍 AI Code Review
+
+❌ **Review generation failed.**
+
+The automated reviewer was unable to complete the analysis after multiple retries.
+
+**What to do next:**
+- Please contact the repository owner or admin to investigate.
+- You can try closing and re-opening the PR to trigger a fresh review.
+
+---
+<sub>This message was generated automatically</sub>"""
+
 
 def build_review_prompt(file_diffs, skipped_files):
     """
@@ -253,7 +266,12 @@ def review_record(record):
     review = generate_review(prompt)
 
     if review is None:
-        print('[review_record] LLM review generation failed.')
+        print('[review_record] LLM review generation failed after all retries.')
+        if comment_url:
+            try:
+                patch_comment(comment_url, FAILURE_COMMENT)
+            except Exception as e:
+                print(f'[review_record] Could not patch failure comment either: {e}')
         return
 
     if comment_url:
