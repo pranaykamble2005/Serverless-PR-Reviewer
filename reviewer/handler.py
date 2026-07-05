@@ -26,6 +26,9 @@ MAX_TOTAL_DIFF_LINES = 2000
 LLM_MAX_RETRIES = 5
 LLM_BACKOFF_BASE = 2.0
 
+GH_MAX_RETRIES = 5
+GH_BACKOFF_BASE = 2.0
+
 _GEMINI_TRANSIENT_ERRORS = (
     google_exceptions.ResourceExhausted,
     google_exceptions.ServiceUnavailable,
@@ -145,9 +148,44 @@ def patch_comment(comment_url, body_text):
         'Accept': 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2022-11-28',
     }
-    resp = requests.patch(comment_url, headers=headers, json={'body': body_text}, timeout=10)
-    resp.raise_for_status()
-    return resp.json()
+    payload = {'body': body_text}
+
+    for attempt in range(1, GH_MAX_RETRIES + 1):
+        try:
+            resp = requests.patch(
+                comment_url, headers=headers, json=payload, timeout=10
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code
+            if status in (500, 502, 503, 504):
+                wait = GH_BACKOFF_BASE * (2 ** (attempt - 1))
+                print(
+                    f"[GitHub PATCH] {status} on attempt {attempt}/{GH_MAX_RETRIES}. "
+                    f"Retrying in {wait:.1f}s..."
+                )
+                if attempt < GH_MAX_RETRIES:
+                    time.sleep(wait)
+            else:
+                print(
+                    f"[GitHub PATCH] Non-retryable HTTP {status} on attempt "
+                    f"{attempt}/{GH_MAX_RETRIES}: {e}"
+                )
+                raise
+
+        except requests.exceptions.RequestException as e:
+            wait = GH_BACKOFF_BASE * (2 ** (attempt - 1))
+            print(
+                f"[GitHub PATCH] Network error on attempt {attempt}/{GH_MAX_RETRIES}: "
+                f"{type(e).__name__}: {e}. Retrying in {wait:.1f}s..."
+            )
+            if attempt < GH_MAX_RETRIES:
+                time.sleep(wait)
+
+    print(f"[GitHub PATCH] All {GH_MAX_RETRIES} retries exhausted for {comment_url}.")
+    raise RuntimeError(f"GitHub PATCH failed after {GH_MAX_RETRIES} retries")
 
 
 def review_record(record):
