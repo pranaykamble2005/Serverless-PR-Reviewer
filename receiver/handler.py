@@ -11,11 +11,23 @@ load_dotenv()
 
 GITHUB_SECRET = os.environ.get('GITHUB_SECRET', '')
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
+SQS_QUEUE_NAME = os.environ.get('SQS_QUEUE_NAME', '')
 sqs = boto3.resource('sqs')
 
 
 def push_message_to_sqs(queue_name, body):
-    pass
+    """
+    Push a JSON-serialisable message body to the named SQS queue.
+    Returns the SQS SendMessage response.
+    """
+    if not queue_name:
+        raise ValueError("SQS_QUEUE_NAME environment variable is not set. Cannot push message.")
+
+    queue = sqs.get_queue_by_name(QueueName=queue_name)
+    response = queue.send_message(
+        MessageBody=json.dumps(body)
+    )
+    return response
 
 def build_placeholder_comment(pr_details):
     """
@@ -139,12 +151,23 @@ def lambda_handler(event, context):
     }
 
     comment = build_placeholder_comment(pr_details)
-    post_github_comment(pull_request_issue_url, comment)
 
-    #Todo: will have to push message to sqs first, then return response to github webhook
-    
+    try:
+        comment_response = post_github_comment(pull_request_issue_url, comment)
+    except:
+        comment_response = None
+
+    comment_url = None if comment_response is None else comment_response.get('url', '')
+    pull_request_url = pull_request.get('url', '')
+
+    sqs_message = {
+        "pull_request_url": pull_request_url,
+        "pull_request_issue_url": pull_request_issue_url,
+        "comment_url": comment_url,
+    }
+    push_message_to_sqs(SQS_QUEUE_NAME, sqs_message)
 
     return {
         "status": 200,
-        "message": "Placeholder comment posted successfully"
+        "message": "Placeholder comment posted and review job queued successfully"
     }
