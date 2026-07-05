@@ -201,6 +201,58 @@ def patch_comment(comment_url, body_text):
     raise RuntimeError(f"GitHub PATCH failed after {GH_MAX_RETRIES} retries")
 
 
+def post_github_comment(issue_url, body_text):
+    """
+    POST a new comment on a GitHub PR via the Issues API.
+    Used as a fallback when no placeholder comment_url is available.
+    Applies the same exponential backoff as patch_comment.
+    """
+    url = f"{issue_url}/comments"
+    headers = {
+        'Authorization': f'Bearer {GITHUB_TOKEN}',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+    }
+    payload = {'body': body_text}
+
+    for attempt in range(1, GH_MAX_RETRIES + 1):
+        try:
+            resp = requests.post(
+                url, headers=headers, json=payload, timeout=10
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code
+            if status in (500, 502, 503, 504):
+                wait = GH_BACKOFF_BASE * (2 ** (attempt - 1))
+                print(
+                    f"[GitHub POST] {status} on attempt {attempt}/{GH_MAX_RETRIES}. "
+                    f"Retrying in {wait:.1f}s..."
+                )
+                if attempt < GH_MAX_RETRIES:
+                    time.sleep(wait)
+            else:
+                print(
+                    f"[GitHub POST] Non-retryable HTTP {status} on attempt "
+                    f"{attempt}/{GH_MAX_RETRIES}: {e}"
+                )
+                raise
+
+        except requests.exceptions.RequestException as e:
+            wait = GH_BACKOFF_BASE * (2 ** (attempt - 1))
+            print(
+                f"[GitHub POST] Network error on attempt {attempt}/{GH_MAX_RETRIES}: "
+                f"{type(e).__name__}: {e}. Retrying in {wait:.1f}s..."
+            )
+            if attempt < GH_MAX_RETRIES:
+                time.sleep(wait)
+
+    print(f"[GitHub POST] All {GH_MAX_RETRIES} retries exhausted for {url}.")
+    raise RuntimeError(f"GitHub POST failed after {GH_MAX_RETRIES} retries")
+
+
 def review_record(record):
     body = json.loads(record['body'])
 
@@ -267,20 +319,24 @@ def review_record(record):
 
     if review is None:
         print('[review_record] LLM review generation failed after all retries.')
-        if comment_url:
-            try:
+        try:
+            if comment_url:
                 patch_comment(comment_url, FAILURE_COMMENT)
-            except Exception as e:
-                print(f'[review_record] Could not patch failure comment either: {e}')
+            else:
+                print('[review_record] No comment_url — posting failure notice as a new comment.')
+                post_github_comment(pull_request_issue_url, FAILURE_COMMENT)
+        except Exception as e:
+            print(f'[review_record] Could not deliver failure notice to GitHub: {e}')
         return
 
-    if comment_url:
-        try:
+    try:
+        if comment_url:
             patch_comment(comment_url, review)
-        except Exception as e:
-            print(f'[review_record] Failed to PATCH review comment: {e}')
-    else:
-        print('[review_record] comment_url is None — skipping PATCH.')
+        else:
+            print('[review_record] No comment_url — posting review as a new comment.')
+            post_github_comment(pull_request_issue_url, review)
+    except Exception as e:
+        print(f'[review_record] Failed to deliver review to GitHub: {e}')
 
 
 def lambda_handler(event, context):
