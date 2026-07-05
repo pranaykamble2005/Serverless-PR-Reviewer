@@ -3,9 +3,11 @@ import hmac
 import hashlib
 import json
 import requests
+import time
 from dotenv import load_dotenv
 import os
 from google import genai
+from google.api_core import exceptions as google_exceptions
 
 load_dotenv()
 
@@ -20,6 +22,16 @@ SQS_QUEUE_NAME = os.environ['SQS_QUEUE_NAME']
 
 MAX_CHANGES_PER_FILE = 400
 MAX_TOTAL_DIFF_LINES = 2000
+
+LLM_MAX_RETRIES = 5
+LLM_BACKOFF_BASE = 2.0
+
+_GEMINI_TRANSIENT_ERRORS = (
+    google_exceptions.ResourceExhausted,
+    google_exceptions.ServiceUnavailable,
+    google_exceptions.DeadlineExceeded,
+    google_exceptions.InternalServerError,
+)
 
 
 def build_review_prompt(file_diffs, skipped_files):
@@ -98,15 +110,30 @@ def generate_review(prompt):
     Call Gemini to generate a PR review.
     Returns the review text on success, or None on failure.
     """
-    try:
-        review = llm_client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=prompt
-        )
-        return review.text
-    except Exception as e:
-        print(f"[Gemini] Error generating review: {type(e).__name__}: {e}")
-        return None
+    for attempt in range(1, LLM_MAX_RETRIES + 1):
+        try:
+            review = llm_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt
+            )
+            return review.text
+
+        except _GEMINI_TRANSIENT_ERRORS as e:
+            wait = LLM_BACKOFF_BASE * (2 ** (attempt - 1))
+            print(
+                f"[Gemini] Transient error on attempt {attempt}/{LLM_MAX_RETRIES}: "
+                f"{type(e).__name__}: {e}. Retrying in {wait:.1f}s..."
+            )
+            if attempt < LLM_MAX_RETRIES:
+                time.sleep(wait)
+
+        except Exception as e:
+            print(f"[Gemini] Unexpected error on attempt {attempt}/{LLM_MAX_RETRIES}: "
+                  f"{type(e).__name__}: {e}")
+            return None
+
+    print(f"[Gemini] All {LLM_MAX_RETRIES} retries exhausted. Giving up.")
+    return None
 
 
 def patch_comment(comment_url, body_text):
