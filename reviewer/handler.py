@@ -267,14 +267,17 @@ def review_record(record):
         'X-GitHub-Api-Version': '2022-11-28',
     }
 
+    print(f"[review_record] Fetching changed files from PR URL: {files_url}")
     files_changed_in_pr = None
-    for _ in range(5):
+    for attempt in range(1, 6):
         try:
             resp = requests.get(files_url, headers=gh_headers)
             resp.raise_for_status()
             files_changed_in_pr = resp.json()
+            print(f"[review_record] Successfully fetched details for {len(files_changed_in_pr)} file(s) (Attempt {attempt})")
             break
-        except requests.RequestException:
+        except requests.RequestException as e:
+            print(f"[review_record] Attempt {attempt}/5 failed to fetch PR files: {e}")
             files_changed_in_pr = None
 
     if files_changed_in_pr is None:

@@ -135,7 +135,7 @@ def lambda_handler(event, context):
             "message": f"Invalid Event Type : {event_type}"
         }
 
-    if body['action'] != 'opened':
+    if body['action'] not in ('opened', 'reopened', 'synchronize'):
         return {
             "status": 400,
             "message": f"Invalid Action : {body['action']}"

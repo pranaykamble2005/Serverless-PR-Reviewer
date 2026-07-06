@@ -13,8 +13,14 @@ load_dotenv(dotenv_path)
 GITHUB_SECRET = os.environ.get('GITHUB_SECRET', 'this_is_a_very_bad_webhook_secret')
 
 # Mock GitHub Pull Request Webhook Event Payload
+# Can specify action via CLI arg (e.g., opened, reopened, synchronize)
+action = "opened"
+if len(sys.argv) > 1:
+    action = sys.argv[1]
+    print(f"Using CLI argument action: '{action}'")
+
 payload = {
-    "action": "opened",
+    "action": action,
     "pull_request": {
         "url": "https://api.github.com/repos/octocat/Hello-World/pulls/1347",
         "number": 1347,

@@ -1,6 +1,20 @@
-# I am currently working on this project.
-## Please come back later for more details.
+# Serverless GitHub PR Reviewer
 
-    What I am trying to do: Make a AI Pull Request Reviewer using AWS serverless services.
+An AI-powered Pull Request reviewer built using AWS serverless components and the Gemini API.
 
-    This project will strenthen my knowledge on cloud services of AWS understand the GitHub Webhook API and learn more about webhooks.
+## Features
+- **Webhook Receiver**: A lightweight lambda function that listens to GitHub PR webhooks (`opened`, `reopened`, `synchronize`), posts an initial placeholder comment, and queues the job.
+- **Reviewer Engine**: A background consumer that processes PR diffs and generates structured code reviews using Gemini.
+
+## Local Testing
+To test the webhook handler locally:
+1. Start the local server:
+   ```bash
+   cd local
+   python server.py
+   ```
+2. In another terminal, trigger a mock webhook:
+   ```bash
+   cd local
+   python test_webhook.py [opened|reopened|synchronize]
+   ```
