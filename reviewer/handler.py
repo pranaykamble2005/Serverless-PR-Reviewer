@@ -15,7 +15,6 @@ sqs = boto3.resource('sqs')
 llm_client = genai.Client()
 
 GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-3.5-flash')
-GITHUB_SECRET = os.environ['GITHUB_SECRET']
 GITHUB_TOKEN = os.environ['GITHUB_TOKEN']
 SQS_QUEUE_NAME = os.environ['SQS_QUEUE_NAME']
 
@@ -327,7 +326,8 @@ def review_record(record):
                 post_github_comment(pull_request_issue_url, FAILURE_COMMENT)
         except Exception as e:
             print(f'[review_record] Could not deliver failure notice to GitHub: {e}')
-        return
+            return False
+        return True
 
     try:
         if comment_url:
@@ -337,10 +337,24 @@ def review_record(record):
             post_github_comment(pull_request_issue_url, review)
     except Exception as e:
         print(f'[review_record] Failed to deliver review to GitHub: {e}')
+        return False
+
+    return True
 
 
 def lambda_handler(event, context):
+    """
+    Process a batch of SQS records.
+    """
     records = event['records']
+    batch_item_failures = []
 
     for record in records:
-        review_record(record)
+        message_id = record.get('messageId', 'unknown')
+        success = review_record(record)
+
+        if not success:
+            print(f"[lambda_handler] Message {message_id} failed — leaving in queue for retry.")
+            batch_item_failures.append({"itemIdentifier": message_id})
+
+    return {"batchItemFailures": batch_item_failures}

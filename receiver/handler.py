@@ -7,13 +7,13 @@ import requests
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 
-load_dotenv()
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+load_dotenv(_env_path)
 
 GITHUB_SECRET = os.environ.get('GITHUB_SECRET', '')
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
 SQS_QUEUE_NAME = os.environ.get('SQS_QUEUE_NAME', '')
-sqs = boto3.resource('sqs')
-
+AWS_REGION = os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')
 
 def push_message_to_sqs(queue_name, body):
     """
@@ -23,6 +23,7 @@ def push_message_to_sqs(queue_name, body):
     if not queue_name:
         raise ValueError("SQS_QUEUE_NAME environment variable is not set. Cannot push message.")
 
+    sqs = boto3.resource('sqs', region_name=AWS_REGION)
     queue = sqs.get_queue_by_name(QueueName=queue_name)
     response = queue.send_message(
         MessageBody=json.dumps(body)
